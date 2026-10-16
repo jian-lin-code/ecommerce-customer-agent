@@ -1,0 +1,274 @@
+import time
+import uuid
+from typing import Any
+
+from pydantic import BaseModel
+
+from domain.contexts import TaskContext, SystemContext
+from domain.messages import UserMessage, BotMessage, FocusedObject
+
+
+class Turn(BaseModel):
+    """
+    本轮对话的对象
+    """
+    turn_id: str	# 轮次唯一标识，使用 UUID
+    user_message: UserMessage 	# 这一轮用户说的那一句话
+    bot_messages: list[BotMessage]	# 这一轮系统给出的所有回复
+
+
+
+class Session(BaseModel):
+    """
+    会话信息
+    """
+    session_id: str  # 会话唯一标识，使用 UUID
+    started_at: float  # 会话开始的时间戳
+    last_activity_at: float  # 最后一次活动的时间戳，用来判断超时
+    closed_at: float | None = None  # 会话关闭时间，未关闭时为 `None`
+    turns: list[Turn] = []  # 这个会话里的所有轮次
+
+
+class DialogueState(BaseModel):
+    sender_id: str  # 用户唯一标识
+    active_task: TaskContext | None = None  # 当前活跃的业务任务
+    paused_tasks: list[TaskContext] = []  # 被挂起的任务列表
+    active_system_task: SystemContext | None = None  # 当前执行的系统流程
+    focused_object: FocusedObject | None = None # 用户当前聚焦的订单 / 商品
+    sessions: list[Session] = []  # 历史会话列表
+    current_session_id: str | None = None  # 当前活跃会话的ID
+    pending_turn: Turn | None = None  # 正在处理中的轮次
+
+    # --------------任务相关--------------------------
+    # 开启任务
+    def start_active_task(self, active_task: TaskContext):
+        """
+        把传进来的 TaskContext 设为活跃任务。
+        调用时机：当 TurnPlanner 判断用户发起了一个新业务任务时。
+        :param active_task:
+        :return:
+        """
+        self.active_task = active_task
+
+    # 结束任务
+    def end_active_task(self):
+        """
+        结束业务任务
+        调用时机：当业务任务流程跑到 end 步骤时。
+        :return:
+        """
+        self.active_task = None
+
+    # 取消业务任务
+    def cancel_active_task(self):
+        """
+        取消业务任务
+        把活跃任务和当前系统过场都清空
+        调用时机：用户主动说"算了不退了"这类取消意图时。
+        :return:
+        """
+        self.active_task = None
+        self.active_system_task = None
+
+    # 中断活跃任务
+    def interrupted_active_task(self):
+        """
+        中断活跃任务
+        把当前活跃任务 移到挂起列表，再清空活跃任务。
+        调用时机：用户在任务 A 中途切到任务 B 时。
+        :return:
+        """
+        self.paused_tasks.append(self.active_task)
+        self.active_task = None
+
+    # 恢复业务任务: 流程ID
+    def resumed_active_task(self, flow_id: str | None = None) -> bool:
+        """
+        恢复业务任务:流程ID
+
+        如果用户没有明确指定需要恢复的具体任务，那么 flow_id = None，恢复最近的任务
+        如果用户明确指定需要恢复的具体任务：
+          则按 flow_id 在挂起列表里找到这个任务，恢复为活跃任务，并从挂起列表里移除。
+
+        调用时机：用户说"继续刚才的退款"这类意图时。
+
+        注意：任务被恢复时，step_id 和 slots 都还在，所以可以从挂起前的位置接着跑，不用从头来。
+
+        :return: 恢复成功或失败
+        """
+
+        # 1. 判断栈中是否存在中断的业务任务
+        if not self.paused_tasks:
+            return False
+
+        # 2. 如果业务流程ID不存在
+        if flow_id is None:
+            self.active_task = self.paused_tasks.pop()
+            return True
+
+        # 2. 如果业务流程ID存在
+        for i, paused_task in enumerate(self.paused_tasks):
+            if paused_task.flow_id == flow_id:
+                # 激活
+                self.active_task = paused_task
+                # 删除
+                del self.paused_tasks[i]
+                return True
+
+        return False
+
+    # 开启系统流程
+    def start_active_system_task(self, active_system_task: SystemContext):
+        """
+        开启系统流程
+        调用时机：每当系统要插播过场白（任务开始、打断、取消、恢复、收集槽位）时。
+        :param active_system_task:
+        :return:
+        """
+        self.active_system_task = active_system_task
+
+    # 结束系统流程
+    def end_active_system_task(self):
+        """
+        结束系统流程
+        :return:
+        """
+        self.active_system_task = None
+
+    # 返回当前正在执行的任务（系统流程、业务任务）
+    def current_active_task(self):
+        """
+        返回当前正在执行的任务（系统流程、业务任务）
+        先获取系统流程 如果获取不到 获取业务任务
+        - 如果有系统流程，先返回系统流程
+        - 否则返回业务任务
+
+        为什么系统流程优先？
+        因为系统流程往往是要插播一句过场白，必须先说完，然后才能让位给业务任务继续。
+        :return:
+        """
+        return self.active_system_task or self.active_task
+
+    # --------------槽位相关--------------------------
+    # 设置槽位
+    def set_slots(self, slots: dict[str, Any]):
+        """
+        设置槽位
+        把传进来的 dict 合并到当前活跃任务的 slots 里。
+        :param slots:
+        :return:
+        """
+        self.active_task.slots.update(slots)
+
+    # 移除槽位
+    def remove_slot(self, slot_name: str):
+        """
+        移除槽位
+        从当前活跃任务的 `slots` 里删一个键。比如用户输入有误，重新收集时会先清掉旧的。
+        :param slot_name: 移除的槽位名
+        :return:
+        """
+        self.active_task.slots.pop(slot_name)
+
+    # -------------- session相关 --------------------------
+    # 获取当前会话对象
+    def current_session(self) -> Session | None:
+        """
+        获取当前会话对象
+        根据 current_session_id 在 sessions 里找出当前会话。
+        :return:
+        """
+        for session in self.sessions:
+            if session.session_id == self.current_session_id:
+                return session
+
+        return None
+
+    # 开启新会话
+    def start_session(self):
+        """
+        开启新会话
+        创建一个新的 Session，加进 sessions 列表，并把它设为当前会话。
+        :return:
+        """
+        if self.current_session() is None:
+            now = time.time()
+            session_id = str(uuid.uuid4())
+            session = Session(
+                session_id=session_id,
+                started_at=now,
+                last_activity_at=now
+            )
+            self.sessions.append(session)
+            self.current_session_id = session_id
+
+    # 关闭当前会话
+    def close_current_session(self):
+        """
+        关闭当前会话
+        给当前会话打上关闭时间戳，再把 current_session_id 置空。
+        :return:
+        """
+        if self.current_session() is not None:
+            # 1. 修改session的时间closed_at
+            self.current_session().closed_at = time.time()
+            # 2. 清空当前的session_id
+            self.current_session_id = None
+
+    # 重置会话状态
+    def reset_runtime_state_for_new_session(self):
+        """
+        重置会话状态
+        session会话超时新会话开始前的"清理工作"。
+        注意：
+        - 它只清运行时字段：当前任务、挂起任务、系统过场、聚焦对象
+        - 它不清 sessions：历史会话需要保留
+        :return:
+        """
+        self.active_task = None
+        self.active_system_task = None
+        self.paused_tasks = []
+        self.focused_object = None
+        self.pending_turn = None
+        self.current_session_id = None
+
+    # --------------turn相关--------------------------
+    # 开始一个turn
+    def begin_turn(self, message: UserMessage):
+        """
+        开始一个turn
+        收到用户消息后，把它装进一个新的 turn 对象
+        先放到 pending_turn，而不是直接进 session。
+        :param message:
+        :return:
+        """
+        if self.current_session():
+            self.pending_turn = Turn(
+                turn_id=str(uuid.uuid4()),
+                user_message=message,
+                bot_messages=[]
+            )
+
+    # 提交一个turn
+    def commit_pending_turn(self):
+        """
+        提交一个turn
+        本轮处理完成（机器人回复也填好了）后
+        把 pending_turn 追加到当前会话的 turns 里，再把 pending_turn 清空。
+        :return:
+        """
+        if self.current_session():
+            self.current_session().turns.append(self.pending_turn)
+            self.pending_turn = None
+
+    # --------------FocusedObject相关--------------------------
+    # 设置聚焦对象
+    def set_focused_object(self, focused_object: FocusedObject):
+        """
+        设置聚焦对象
+        调用时机：
+        用户发的不是文本而是一条对象消息时,例如前端点了订单卡片
+        需要把这个对象设为当前关注的对象。
+        :param focused_object:
+        """
+        self.focused_object = focused_object

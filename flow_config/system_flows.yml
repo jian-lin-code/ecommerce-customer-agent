@@ -1,0 +1,104 @@
+flows:
+  system_task_started:
+    description: Flow for acknowledging that a new task has started
+    name: task started acknowledgement
+    steps:
+      - id: start
+        type: start
+        next: acknowledge
+
+      - id: acknowledge
+        type: action
+        action: action_response
+        args:
+          mode: static
+          text: "好的，我们先处理{{ context.started_flow_name }}。"
+        next: end
+
+      - id: end
+        type: end
+        next: []
+
+  system_task_resumed:
+    description: Flow for acknowledging that a paused task has been resumed
+    name: task resumed acknowledgement
+    steps:
+      - id: start
+        type: start
+        next: acknowledge
+
+      - id: acknowledge
+        type: action
+        action: action_response
+        args:
+          mode: static
+          text: "好的，我们继续刚才的{{ context.resumed_flow_name }}。"
+        next: end
+
+      - id: end
+        type: end
+        next: []
+
+  system_collect_information:
+    description: Flow for asking the user for a slot value during a collect step
+    name: collect information
+    steps:
+      - id: start
+        type: start
+        next: ask
+
+      - id: ask
+        type: action
+        action: action_response
+        args: context.response
+        next: listen
+
+      - id: listen
+        type: action
+        action: action_listen
+        next: end
+
+      - id: end
+        type: end
+        next: []
+
+  system_task_interrupted:
+    description: Flow for acknowledging that the current task has been interrupted
+    name: task interrupted acknowledgement
+    steps:
+      - id: start
+        type: start
+        next: acknowledge
+
+      - id: acknowledge
+        type: action
+        action: action_response
+        args:
+          mode: static
+          text: "好的，我们先把{{ context.interrupted_flow_name }}放一放，先处理{{ context.started_flow_name }}。"
+        next: end
+
+      - id: end
+        type: end
+        next: []
+
+  system_task_canceled:
+    description: Flow for acknowledging that the current task was canceled
+    name: task canceled acknowledgement
+    steps:
+      - id: start
+        type: start
+        next: acknowledge
+
+
+      - id: acknowledge
+        type: action
+        action: action_response
+        args:
+          mode: static
+          text: "好的，{{ context.canceled_flow_name }}先帮你取消。"
+        next: end
+
+      - id: end
+        type: end
+        next: []

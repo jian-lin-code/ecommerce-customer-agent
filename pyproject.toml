@@ -1,0 +1,26 @@
+[project]
+name = "ecommerce-customer-agent"
+version = "0.1.0"
+description = "电商小二"
+requires-python = ">=3.12"
+dependencies = [
+    "aiomysql>=0.3.2",
+    "asyncmy>=0.2.11",
+    "cryptography>=46.0.7",
+    "fastapi>=0.136.0",
+    "greenlet>=3.5.6",
+    "httpx>=0.28.1",
+    "jinja2>=3.1.6",
+    "langchain>=1.2.15",
+    "langchain-openai>=1.1.14",
+    "loguru>=0.7.3",
+    "pydantic>=2.13.4",
+    "pydantic-settings>=2.13.1",
+    "pyyaml>=6.0.3",
+    "sqlalchemy>=2.1.3",
+    "uvicorn>=0.44.0",
+]
+
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true

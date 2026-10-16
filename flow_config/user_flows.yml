@@ -1,0 +1,139 @@
+slots:
+  order_number:
+    type: text
+    label: 订单号
+    description: 用户的订单号
+
+  order_status:
+    type: text
+    label: 订单状态
+    description: 订单当前状态
+
+  order_summary:
+    type: text
+    label: 订单摘要
+    description: 订单摘要信息
+
+  tracking_number:
+    type: text
+    label: 物流单号
+    description: 物流单号
+
+  logistics_company:
+    type: text
+    label: 物流公司
+    description: 物流公司名称
+
+  logistics_status:
+    type: text
+    label: 物流进度
+    description: 物流当前进度
+
+  product_id:
+    type: text
+    label: 商品ID
+    description: 当前咨询商品的唯一标识
+
+  refund_reason:
+    type: text
+    label: 退款原因
+    description: 申请退款的原因
+
+flows:
+  order_status_query:
+    name: 订单状态查询
+    description: 帮用户查询订单当前的处理状态，例如待付款、待发货、已发货或已完成。
+    steps:
+      - id: start
+        type: start
+        next: ask_order_number
+
+      - id: ask_order_number
+        type: collect
+        slot_name: order_number
+        response:
+          text: "请告诉我你的订单号。"
+        next: lookup_order_status
+
+
+      - id: lookup_order_status
+        type: action
+        action: action_lookup_order_status
+        next: show_order_status
+
+      - id: show_order_status
+        type: action
+        action: action_response
+        args:
+          mode: static
+          text: "订单{{ slots.order_number }}当前状态是：{{ slots.order_status }}。{{ slots.order_summary }}"
+        next: end
+
+      - id: end
+        type: end
+        next: []
+
+  logistics_tracking:
+    name: 物流查询
+    description: 帮用户查询订单物流进度、物流单号和配送公司信息。
+    steps:
+      - id: start
+        type: start
+        next: ask_order_number
+
+      - id: ask_order_number
+        type: collect
+        slot_name: order_number
+        response:
+          text: "请告诉我你的订单号。"
+        next: lookup_logistics
+
+      - id: lookup_logistics
+        type: action
+        action: action_lookup_logistics
+        next: show_logistics
+
+      - id: show_logistics
+        type: action
+        action: action_response
+        args:
+          text: "订单{{ slots.order_number }}由{{ slots.logistics_company }}配送，物流单号是{{ slots.tracking_number }}。当前进度：{{ slots.logistics_status }}。"
+        next: end
+
+      - id: end
+        type: end
+        next: []
+
+  refund_request:
+    name: 退款申请
+    description: 帮用户提交简单的退款申请，收集订单号和退款原因。
+    steps:
+      - id: start
+        type: start
+        next: ask_order_number
+
+      - id: ask_order_number
+        type: collect
+        slot_name: order_number
+        response:
+          text: "请告诉我你的订单号。"
+        next: ask_refund_reason
+
+      - id: ask_refund_reason
+        type: collect
+        slot_name: refund_reason
+        response:
+          text: "请简单说一下退款原因。"
+        next: refund_submitted
+
+      - id: refund_submitted
+        type: action
+        action: action_response
+        args:
+          text: "好的，订单{{ slots.order_number }}的退款申请已提交，原因是：{{ slots.refund_reason }}。后续会尽快为你处理。"
+        next: end
+
+
+      - id: end
+        type: end
+        next: []
